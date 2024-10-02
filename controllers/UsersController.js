@@ -1,5 +1,7 @@
 import sha1 from 'sha1';
+import { ObjectId } from 'mongodb';
 import dbClient from '../utils/db';
+import redisClient from '../utils/redis';
 
 class UsersController {
   static async postNew(req, res) {
@@ -18,21 +20,41 @@ class UsersController {
     }
 
     const hashedPassword = sha1(password);
+    const userId = new ObjectId();
 
-    let result;
+    const newUser = {
+      _id: userId,
+      email,
+      password: hashedPassword,
+    };
+
+    await dbClient.userCollection.insertOne(newUser);
+
+    return res.status(201).send({ id: userId, email });
+  }
+
+  static async getMe(req, res) {
+    const token = req.header('X-Token');
+    const key = `auth_${token}`;
+    const userId = await redisClient.get(key);
+
+    if (!userId) {
+      return res.status(401).send({ error: 'Unauthorized' });
+    }
 
     try {
-      result = await dbClient.userCollection.insertOne({
-        email, password: hashedPassword,
-      });
+      const users = dbClient.db.collection('users');
+      const idObject = new ObjectId(userId);
+      const user = await users.findOne({ _id: idObject });
+
+      if (user) {
+        return res.status(200).send({ id: userId, email: user.email });
+      }
+      return res.status(401).send({ error: 'Unauthorized' });
     } catch (err) {
-      return res.status(500).send('Error creating user');
+      console.error(err);
+      return res.status(500).send({ error: 'Internal Server Error' });
     }
-    const user = {
-      id: result.insertedId,
-      email,
-    };
-    return res.status(201).send(user);
   }
 }
 
